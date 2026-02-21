@@ -1,6 +1,7 @@
 export default async (req) => {
   try {
     const url = new URL(req.url);
+
     const endpoint = url.searchParams.get("endpoint"); // quote | candles
     const exchange = url.searchParams.get("exchange"); // NSE | BSE
     const segment = url.searchParams.get("segment") || "CASH";
@@ -9,18 +10,22 @@ export default async (req) => {
       return new Response(JSON.stringify({ error: "Missing required params: endpoint, exchange" }), { status: 400 });
     }
 
-    const accessToken = process.env.GROWW_ACCESS_TOKEN;
-    if (!accessToken) {
+    const apiKey = process.env.GROWW_API_KEY;
+    const apiSecret = process.env.GROWW_API_SECRET;
+
+    if (!apiKey || !apiSecret) {
       return new Response(JSON.stringify({
-        error: "Missing GROWW_ACCESS_TOKEN env var",
-        note: "Groww access tokens expire daily; refresh and update this env var."
+        error: "Missing GROWW_API_KEY or GROWW_API_SECRET env var"
       }), { status: 500 });
     }
 
+    // Groww headers (API-key auth style)
+    // NOTE: If Groww requires Bearer token instead, we’ll switch back to GROWW_ACCESS_TOKEN flow.
     const headers = {
       "Accept": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
       "X-API-VERSION": "1.0",
+      "x-api-key": apiKey,
+      "x-api-secret": apiSecret,
     };
 
     let growwUrl;
@@ -30,6 +35,7 @@ export default async (req) => {
       if (!trading_symbol) {
         return new Response(JSON.stringify({ error: "Missing required param for quote: trading_symbol" }), { status: 400 });
       }
+
       growwUrl = new URL("https://api.groww.in/v1/live-data/quote");
       growwUrl.searchParams.set("exchange", exchange);
       growwUrl.searchParams.set("segment", segment);
@@ -62,10 +68,19 @@ export default async (req) => {
     const r = await fetch(growwUrl.toString(), { headers });
     const data = await r.json();
 
-    return new Response(JSON.stringify({ source: "groww", endpoint, exchange, segment, fetched_at_utc: new Date().toISOString(), data }), {
+    return new Response(JSON.stringify({
+      source: "groww",
+      auth: "api_key_secret",
+      endpoint,
+      exchange,
+      segment,
+      fetched_at_utc: new Date().toISOString(),
+      data
+    }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e) }), { status: 500 });
   }
