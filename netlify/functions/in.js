@@ -7,25 +7,25 @@ export default async (req) => {
     const segment = url.searchParams.get("segment") || "CASH";
 
     if (!endpoint || !exchange) {
-      return new Response(JSON.stringify({ error: "Missing required params: endpoint, exchange" }), { status: 400 });
+      return new Response(
+        JSON.stringify({ error: "Missing required params: endpoint, exchange" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
     }
 
-    const apiKey = process.env.GROWW_API_KEY;
-    const apiSecret = process.env.GROWW_API_SECRET;
-
-    if (!apiKey || !apiSecret) {
-      return new Response(JSON.stringify({
-        error: "Missing GROWW_API_KEY or GROWW_API_SECRET env var"
-      }), { status: 500 });
+    // ✅ Use Groww access token (you already added GROWW_ACCESS_TOKEN in Netlify)
+    const accessToken = process.env.GROWW_ACCESS_TOKEN;
+    if (!accessToken) {
+      return new Response(
+        JSON.stringify({ error: "Missing GROWW_ACCESS_TOKEN env var" }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
     }
 
-    // Groww headers (API-key auth style)
-    // NOTE: If Groww requires Bearer token instead, we’ll switch back to GROWW_ACCESS_TOKEN flow.
     const headers = {
-      "Accept": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
       "X-API-VERSION": "1.0",
-      "x-api-key": apiKey,
-      "x-api-secret": apiSecret,
     };
 
     let growwUrl;
@@ -33,9 +33,13 @@ export default async (req) => {
     if (endpoint === "quote") {
       const trading_symbol = url.searchParams.get("trading_symbol");
       if (!trading_symbol) {
-        return new Response(JSON.stringify({ error: "Missing required param for quote: trading_symbol" }), { status: 400 });
+        return new Response(
+          JSON.stringify({ error: "Missing required param for quote: trading_symbol" }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        );
       }
 
+      // Groww live quote endpoint
       growwUrl = new URL("https://api.groww.in/v1/live-data/quote");
       growwUrl.searchParams.set("exchange", exchange);
       growwUrl.searchParams.set("segment", segment);
@@ -48,11 +52,16 @@ export default async (req) => {
       const candle_interval = url.searchParams.get("candle_interval");
 
       if (!groww_symbol || !start_time || !end_time || !candle_interval) {
-        return new Response(JSON.stringify({
-          error: "Missing required candle params: groww_symbol, start_time, end_time, candle_interval"
-        }), { status: 400 });
+        return new Response(
+          JSON.stringify({
+            error:
+              "Missing required candle params: groww_symbol, start_time, end_time, candle_interval",
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        );
       }
 
+      // Groww historical candles endpoint
       growwUrl = new URL("https://api.groww.in/v1/historical/candles");
       growwUrl.searchParams.set("exchange", exchange);
       growwUrl.searchParams.set("segment", segment);
@@ -62,26 +71,58 @@ export default async (req) => {
       growwUrl.searchParams.set("candle_interval", candle_interval);
 
     } else {
-      return new Response(JSON.stringify({ error: "Invalid endpoint. Use quote|candles" }), { status: 400 });
+      return new Response(
+        JSON.stringify({ error: "Invalid endpoint. Use quote|candles" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
     }
 
     const r = await fetch(growwUrl.toString(), { headers });
-    const data = await r.json();
+    const text = await r.text();
 
-    return new Response(JSON.stringify({
-      source: "groww",
-      auth: "api_key_secret",
-      endpoint,
-      exchange,
-      segment,
-      fetched_at_utc: new Date().toISOString(),
-      data
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    // Try JSON parse, but keep raw if Groww returns non-JSON
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+
+    // If Groww returns auth failure, pass it through clearly
+    if (!r.ok) {
+      return new Response(
+        JSON.stringify({
+          source: "groww",
+          auth: "bearer_token",
+          endpoint,
+          exchange,
+          segment,
+          status: "FAILURE",
+          http_status: r.status,
+          fetched_at_utc: new Date().toISOString(),
+          data,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        source: "groww",
+        auth: "bearer_token",
+        endpoint,
+        exchange,
+        segment,
+        fetched_at_utc: new Date().toISOString(),
+        data,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
 
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), { status: 500 });
+    return new Response(
+      JSON.stringify({ error: String(e) }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 };
